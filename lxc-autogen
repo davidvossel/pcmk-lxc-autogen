@@ -1,0 +1,81 @@
+#!/bin/bash
+
+containers="3"
+addr="192.168.122"
+cur_dir=$(pwd)
+
+function helptext() {
+    echo "lxc_autogen.sh - A tool for generating libvirt lxc containers for testing purposes."
+    echo ""
+    echo "Usage: lxv-autogen [options]"
+    echo ""
+    echo "Options:"
+    echo "-c, --containers   Specify the number of containers to generate, defaults to $containers."
+    echo ""
+    exit $1
+}
+
+while true ; do
+    case "$1" in
+	--help|-h|-\?) helptext 0;;
+	-c|--containers) containers="$2"; shift; shift;;
+	"") break;;
+	*) helptext 1;;
+    esac
+done
+
+# Pull in the latest VirtualDomain agent. There is an lxc bug in earlier versions.
+wget https://raw.github.com/ClusterLabs/resource-agents/master/heartbeat/VirtualDomain
+chmod 755 VirtualDomain
+mv -f VirtualDomain /usr/lib/ocf/resource.d/heartbeat/VirtualDomain
+
+# Generate libvirt domains in xml
+for (( c=1; c <= $containers; c++ ))
+do
+rm -rf lxc$c-filesystem
+mkdir -p lxc$c-filesystem/var/run
+mkdir -p lxc$c-filesystem/usr/var/run
+rm -f lxc$c.xml
+
+cat << END >> lxc$c.xml
+<domain type='lxc'>
+  <name>lxc$c</name>
+  <memory>102400</memory>
+  <os>
+    <type>exe</type>
+    <init>$cur_dir/lxc$c-filesystem/launch-helper</init>
+  </os>
+  <vcpu>1</vcpu>
+  <devices>
+    <console type='pty'/>
+    <filesystem type='mount'>
+      <source dir='$cur_dir/lxc$c-filesystem/var/run'/>
+      <target dir='/var/run'/>
+    </filesystem>
+    <filesystem type='mount'>
+      <source dir='$cur_dir/lxc$c-filesystem/usr/var/run'/>
+      <target dir='/usr/var/run'/>
+    </filesystem>
+    <interface type='network'>
+      <mac address='52:54:00:$c$c:$(($RANDOM % 9))$(($RANDOM % 9)):$(($RANDOM % 9))$c'/>
+      <source network='default'/>
+    </interface>
+  </devices>
+</domain>
+END
+
+cat << END >> lxc$c-filesystem/launch-helper
+#!/bin/bash
+ifconfig eth0 $addr.10$c
+route add 0.0.0.0 gw $addr.1 eth0
+/usr/sbin/pacemaker_remoted
+END
+chmod 711 lxc$c-filesystem/launch-helper
+
+cat << END >> /etc/hosts
+$addr.10$c     lxc$c
+END
+done
+
+
+
