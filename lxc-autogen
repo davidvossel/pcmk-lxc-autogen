@@ -1,8 +1,10 @@
 #!/bin/bash
 
 containers="3"
-addr="192.168.122"
+download=0
+addr="192.168.123.1"
 cur_dir=$(pwd)
+restore=0
 
 function helptext() {
     echo "lxc_autogen.sh - A tool for generating libvirt lxc containers for testing purposes."
@@ -10,33 +12,95 @@ function helptext() {
     echo "Usage: lxv-autogen [options]"
     echo ""
     echo "Options:"
-    echo "-c, --containers   Specify the number of containers to generate, defaults to $containers."
+    echo "-c, --containers       Specify the number of containers to generate, defaults to $containers."
+    echo "-d, --download-agent   Download and install the latest VirtualDomain agent."
+    echo "-n, --network          What network to override default libvirt network to. Example: -n 192.168.123.1"
+    echo "-r, --restore          Restore the default network to before this script ran."
     echo ""
     exit $1
 }
 
 while true ; do
-    case "$1" in
+	case "$1" in
 	--help|-h|-\?) helptext 0;;
 	-c|--containers) containers="$2"; shift; shift;;
+	-d|--download-agent) download=1; shift;;
+	-n|--network) addr="$2"; shift; shift;;
+	-r|--restore) restore=1; shift;;
 	"") break;;
 	*) helptext 1;;
-    esac
+	esac
 done
 
+#strip last digits off addr
+tmp="s/\.$(echo "$addr" | tr '.' ' ' | awk '{print $4}')$//g"
+addr=$(echo $addr | sed -e ${tmp})
+
+# check if this is a restore run.
+if [ $restore -eq 1 ]; then
+
+	for tmp in $(ls lxc*.xml); do
+		tmp=$(echo $tmp | sed -e 's/\.xml//g')
+		virsh -c lxc:/// destroy $tmp > /dev/null 2>&1
+		virsh -c lxc:/// undefine $tmp > /dev/null 2>&1
+		echo "$tmp destroyed"
+	done
+
+	ls restore_default.xml > /dev/null 2>&1
+	if [ $? -eq 0 ]; then
+		virsh net-destroy default > /dev/null 2>&1
+		virsh net-undefine default > /dev/null 2>&1
+		virsh net-define restore_default.xml
+		virsh net-start default
+		if [ $? -eq 0 ]; then
+			echo "default network restored"
+		fi
+	fi
+
+	rm -rf lxc*-filesystem lxc*.xml cur_network.xml restore_default.xml > /dev/null 2>&1 
+	exit 0
+fi
+
 # Pull in the latest VirtualDomain agent. There is an lxc bug in earlier versions.
-wget https://raw.github.com/ClusterLabs/resource-agents/master/heartbeat/VirtualDomain
-chmod 755 VirtualDomain
-mv -f VirtualDomain /usr/lib/ocf/resource.d/heartbeat/VirtualDomain
+if [ $download -eq 1 ]; then
+	wget https://raw.github.com/ClusterLabs/resource-agents/master/heartbeat/VirtualDomain
+	chmod 755 VirtualDomain
+	mv -f VirtualDomain /usr/lib/ocf/resource.d/heartbeat/VirtualDomain
+fi
+
+# set new network
+rm -f cur_network.xml
+cat << END >> cur_network.xml
+<network>
+  <name>default</name>
+  <uuid>41ebdb84-7134-1111-a136-91f0f1119225</uuid>
+  <forward mode='nat'/>
+  <bridge name='virbr0' stp='on' delay='0' />
+  <mac address='52:54:00:A8:12:35'/>
+  <ip address='$addr.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='$addr.2' end='$addr.254' />
+    </dhcp>
+  </ip>
+</network>
+END
+
+ls restore_default.xml > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+	virsh net-dumpxml default > restore_default.xml
+fi
+virsh net-destroy default
+virsh net-undefine default
+virsh net-define cur_network.xml
+virsh net-start default
 
 # Generate libvirt domains in xml
 for (( c=1; c <= $containers; c++ ))
 do
 rm -rf lxc$c-filesystem
-mkdir -p lxc$c-filesystem/var/run
+mkdir -p lxc$c-filesystem/var/run/
 mkdir -p lxc$c-filesystem/usr/var/run
 rm -f lxc$c.xml
-
 cat << END >> lxc$c.xml
 <domain type='lxc'>
   <name>lxc$c</name>
@@ -75,7 +139,9 @@ chmod 711 lxc$c-filesystem/launch-helper
 cat << END >> /etc/hosts
 $addr.10$c     lxc$c
 END
+
+virsh -c lxc:/// destroy lxc$c > /dev/null 2>&1
+virsh -c lxc:/// undefine lxc$c > /dev/null 2>&1
+#virsh -c lxc:/// define lxc$c.xml
+
 done
-
-
-
