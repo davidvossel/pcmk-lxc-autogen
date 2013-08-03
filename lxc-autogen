@@ -2,6 +2,7 @@
 
 containers="3"
 download=0
+# different than default libvirt network in case this is run nested in a KVM instance
 addr="192.168.123.1"
 cur_dir=$(pwd)
 restore=0
@@ -9,19 +10,19 @@ generate=0
 cib=0
 
 function helptext() {
-    echo "lxc_autogen.sh - A tool for generating libvirt lxc containers for testing purposes."
-    echo ""
-    echo "Usage: lxv-autogen [options]"
-    echo ""
-    echo "Options:"
-    echo "-g, --generate         Generate libvirt lxc environment in the directory this script is run from."
-    echo "-r, --restore          Restore the default network, cib, and libvirt config to before this script ran."
+	echo "lxc_autogen.sh - A tool for generating libvirt lxc containers for testing purposes."
 	echo ""
-    echo "-a, --add-cib          Add remote-node entries for each lxc instance into the cib"
-    echo "-c, --containers       Specify the number of containers to generate, defaults to $containers."
-    echo "-d, --download-agent   Download and install the latest VirtualDomain agent."
-    echo "-n, --network          What network to override default libvirt network to. Example: -n 192.168.123.1"
-    echo ""
+	echo "Usage: lxv-autogen [options]"
+	echo ""
+	echo "Options:"
+	echo "-g, --generate         Generate libvirt lxc environment in the directory this script is run from."
+	echo "-r, --restore          Restore the default network, cib, and libvirt config to before this script ran."
+	echo "-a, --add-cib          Add remote-node entries for each lxc instance into the cib"
+	echo "-d, --download-agent   Download and install the latest VirtualDomain agent."
+	echo ""
+	echo "-c, --containers       Specify the number of containers to generate, defaults to $containers. Used with -g"
+	echo "-n, --network          What network to override default libvirt network to. Example: -n 192.168.123.1. Used with -g"
+	echo ""
     exit $1
 }
 
@@ -42,13 +43,6 @@ done
 #strip last digits off addr
 tmp="s/\.$(echo "$addr" | tr '.' ' ' | awk '{print $4}')$//g"
 addr=$(echo $addr | sed -e ${tmp})
-
-# Pull in the latest VirtualDomain agent. There is an lxc bug in earlier versions.
-if [ $download -eq 1 ]; then
-	wget https://raw.github.com/ClusterLabs/resource-agents/master/heartbeat/VirtualDomain
-	chmod 755 VirtualDomain
-	mv -f VirtualDomain /usr/lib/ocf/resource.d/heartbeat/VirtualDomain
-fi
 
 set_network()
 {
@@ -194,6 +188,11 @@ restore()
 	rm -rf lxc*-filesystem lxc*.xml container*.cib cur_network.xml restore_default.xml > /dev/null 2>&1 
 }
 
+if [ $download -eq 1 ]; then
+	wget https://raw.github.com/ClusterLabs/resource-agents/master/heartbeat/VirtualDomain
+	chmod 755 VirtualDomain
+	mv -f VirtualDomain /usr/lib/ocf/resource.d/heartbeat/VirtualDomain
+fi
 if [ $restore -eq 1 ]; then
 	restore
 fi
