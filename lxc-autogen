@@ -82,6 +82,13 @@ generate()
 {
 	set_network
 
+	#generate pacemaker remote key
+	ls /etc/pacemaker/authkey > /dev/null 2>&1
+	if [ $? != 0 ]; then
+			mkdir -p /etc/pacemaker
+			dd if=/dev/urandom of=/etc/pacemaker/authkey bs=4096 count=1
+	fi
+
 	# Generate libvirt domains in xml
 	for (( c=1; c <= $containers; c++ ))
 	do
