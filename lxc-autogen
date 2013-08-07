@@ -6,8 +6,10 @@ download=0
 addr="192.168.123.1"
 cur_dir=$(pwd)
 restore=0
+restore_pcmk=0
 generate=0
 cib=0
+add_ms=0
 
 function helptext() {
 	echo "lxc_autogen.sh - A tool for generating libvirt lxc containers for testing purposes."
@@ -16,8 +18,10 @@ function helptext() {
 	echo ""
 	echo "Options:"
 	echo "-g, --generate         Generate libvirt lxc environment in the directory this script is run from."
-	echo "-r, --restore          Restore the default network, cib, and libvirt config to before this script ran."
+	echo "-r, --restore-libvirt  Restore the default network, and libvirt config to before this script ran."
+	echo "-p, --restore-cib      Remove cib entries this script generated."
 	echo "-a, --add-cib          Add remote-node entries for each lxc instance into the cib"
+	echo "-p, --add-ms           Add multi-state resource shared between remote-nodes"
 	echo "-d, --download-agent   Download and install the latest VirtualDomain agent."
 	echo ""
 	echo "-c, --containers       Specify the number of containers to generate, defaults to $containers. Used with -g"
@@ -33,8 +37,10 @@ while true ; do
 	-d|--download-agent) download=1; shift;;
 	-n|--network) addr="$2"; shift; shift;;
 	-r|--restore) restore=1; shift;;
+	-p|--restore-cib) restore_pcmk=1; shift;;
 	-g|--generate) generate=1; shift;;
 	-a|--add-cib) cib=1; shift;;
+	-m|--add-ms) add_ms=1; shift;;
 	"") break;;
 	*) helptext 1;;
 	esac
@@ -115,6 +121,7 @@ generate()
   </devices>
 </domain>
 END
+		rm -f container$c.cib
 		cat << END >> container$c.cib
       <primitive class="ocf" id="container$c" provider="heartbeat" type="VirtualDomain">
         <instance_attributes id="container$c-instance_attributes">
@@ -133,6 +140,23 @@ END
         <operations/>
       </primitive>
 END
+
+		rm -f lxc-ms$c.cib
+		cat << END >> lxc-ms.cib
+      <master id="lxc-stateful-master">
+        <primitive class="ocf" id="lxc-stateful" provider="pacemaker" type="Stateful">
+          <instance_attributes id="lxc-stateful-instance_attributes"/>
+          <operations>
+            <op id="lxc-stateful-monitor-interval-60s" interval="60s" name="monitor"/>
+          </operations>
+        </primitive>
+        <meta_attributes id="lxc-stateful-master-meta_attributes">
+          <nvpair id="lxc-stateful-master-meta_attributes-clone-max" name="clone-max" value="3"/>
+        </meta_attributes>
+      </master>
+END
+
+		rm -f lxc$c-filesystem/launch-helper
 		cat << END >> lxc$c-filesystem/launch-helper
 #!/bin/bash
 ifconfig eth0 $addr.10$c
@@ -148,6 +172,23 @@ END
 		virsh -c lxc:/// destroy lxc$c > /dev/null 2>&1
 		virsh -c lxc:/// undefine lxc$c > /dev/null 2>&1
 	done
+}
+
+apply_cib_stateful()
+{
+	cibadmin -Q > cur.cib
+	export CIB_file=cur.cib
+
+	cibadmin -o resources -C -x lxc-ms.cib
+	for tmp in $(ls lxc*.xml); do
+		tmp=$(echo $tmp | sed -e 's/\.xml//g')
+		xml="<rsc_location id=\"lxc-stateful-location-${tmp}\" node=\"${tmp}\" rsc=\"lxc-stateful\" score=\"INFINITY\"/>"
+		cibadmin -o constraints -C -X "${xml}"
+	done
+	unset CIB_file
+
+	cibadmin --replace --xml-file cur.cib
+	rm -f cur.cib
 }
 
 apply_cib_entries()
@@ -168,11 +209,18 @@ apply_cib_entries()
 	rm -f cur.cib
 }
 
-remove_cib_entries()
+restore_cib()
 {
 	node=$(crm_node -n)
 	cibadmin -Q > cur.cib
 	export CIB_file=cur.cib
+
+	for tmp in $(ls lxc*.xml); do
+		tmp=$(echo $tmp | sed -e 's/\.xml//g')
+		xml="<rsc_location id=\"lxc-stateful-location-${tmp}\" node=\"${tmp}\" rsc=\"lxc-stateful\" score=\"INFINITY\"/>"
+		cibadmin -o constraints -D -X "${tmp}"
+	done
+	cibadmin -o resources -D -x lxc-ms.cib
 
 	for tmp in $(ls container*.cib); do
 		tmp=$(echo $tmp | sed -e 's/\.cib//g')
@@ -182,12 +230,11 @@ remove_cib_entries()
 	unset CIB_file
 
 	cibadmin --replace --xml-file cur.cib
+	rm -f container*.cib cur.cib lxc-ms.cib
 }
 
-restore()
+restore_libvirt()
 {
-	remove_cib_entries
-
 	for tmp in $(ls lxc*.xml); do
 		tmp=$(echo $tmp | sed -e 's/\.xml//g')
 		virsh -c lxc:/// destroy $tmp > /dev/null 2>&1
@@ -207,7 +254,8 @@ restore()
 			echo "default network restored"
 		fi
 	fi
-	rm -f cur_network.xml restore_default.xml > /dev/null 2>&1 
+	rm -f lxc*.xml cur_network.xml restore_default.xml > /dev/null 2>&1 
+	rm -rf lxc*-filesystem > /dev/null 2>&1
 }
 
 if [ $download -eq 1 ]; then
@@ -215,12 +263,18 @@ if [ $download -eq 1 ]; then
 	chmod 755 VirtualDomain
 	mv -f VirtualDomain /usr/lib/ocf/resource.d/heartbeat/VirtualDomain
 fi
+if [ $restore_pcmk -eq 1 ]; then
+	restore_cib
+fi
 if [ $restore -eq 1 ]; then
-	restore
+	restore_libvirt
 fi
 if [ $generate -eq 1 ]; then
 	generate
 fi
 if [ $cib -eq 1 ]; then
 	apply_cib_entries
+fi
+if [ $add_ms -eq 1 ]; then
+	apply_cib_stateful
 fi
