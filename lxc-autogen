@@ -20,10 +20,10 @@ function helptext() {
 	echo "-g, --generate         Generate libvirt lxc environment in the directory this script is run from."
 	echo "-r, --restore-libvirt  Restore the default network, and libvirt config to before this script ran."
 	echo "-p, --restore-cib      Remove cib entries this script generated."
+	echo ""
 	echo "-a, --add-cib          Add remote-node entries for each lxc instance into the cib"
 	echo "-p, --add-ms           Add multi-state resource shared between remote-nodes"
 	echo "-d, --download-agent   Download and install the latest VirtualDomain agent."
-	echo ""
 	echo "-c, --containers       Specify the number of containers to generate, defaults to $containers. Used with -g"
 	echo "-n, --network          What network to override default libvirt network to. Example: -n 192.168.123.1. Used with -g"
 	echo ""
@@ -168,9 +168,6 @@ END
 		cat << END >> /etc/hosts
 $addr.10$c     lxc$c
 END
-
-		virsh -c lxc:/// destroy lxc$c > /dev/null 2>&1
-		virsh -c lxc:/// undefine lxc$c > /dev/null 2>&1
 	done
 }
 
@@ -182,8 +179,9 @@ apply_cib_stateful()
 	cibadmin -o resources -C -x lxc-ms.cib
 	for tmp in $(ls lxc*.xml); do
 		tmp=$(echo $tmp | sed -e 's/\.xml//g')
-		xml="<rsc_location id=\"lxc-stateful-location-${tmp}\" node=\"${tmp}\" rsc=\"lxc-stateful\" score=\"INFINITY\"/>"
-		cibadmin -o constraints -C -X "${xml}"
+		echo "<rsc_location id=\"lxc-stateful-location-${tmp}\" node=\"${tmp}\" rsc=\"lxc-stateful\" score=\"INFINITY\"/>" > tmp_constraint
+		cibadmin -o constraints -C -x tmp_constraint
+		rm -f tmp_constraint
 	done
 	unset CIB_file
 
@@ -217,8 +215,9 @@ restore_cib()
 
 	for tmp in $(ls lxc*.xml); do
 		tmp=$(echo $tmp | sed -e 's/\.xml//g')
-		xml="<rsc_location id=\"lxc-stateful-location-${tmp}\" node=\"${tmp}\" rsc=\"lxc-stateful\" score=\"INFINITY\"/>"
-		cibadmin -o constraints -D -X "${tmp}"
+		echo "<rsc_location id=\"lxc-stateful-location-${tmp}\" node=\"${tmp}\" rsc=\"lxc-stateful\" score=\"INFINITY\"/>" > tmp_constraint
+		cibadmin -o constraints -D -x tmp_constraint
+		rm -f tmp_constraint
 	done
 	cibadmin -o resources -D -x lxc-ms.cib
 
@@ -230,7 +229,7 @@ restore_cib()
 	unset CIB_file
 
 	cibadmin --replace --xml-file cur.cib
-	rm -f container*.cib cur.cib lxc-ms.cib
+	rm -f  cur.cib 
 }
 
 restore_libvirt()
@@ -254,8 +253,7 @@ restore_libvirt()
 			echo "default network restored"
 		fi
 	fi
-	rm -f lxc*.xml cur_network.xml restore_default.xml > /dev/null 2>&1 
-	rm -rf lxc*-filesystem > /dev/null 2>&1
+	rm -f restore_default.xml > /dev/null 2>&1 
 }
 
 if [ $download -eq 1 ]; then
