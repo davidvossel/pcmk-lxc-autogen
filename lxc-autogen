@@ -1,6 +1,6 @@
 #!/bin/bash
 
-containers="3"
+containers="2"
 download=0
 # different than default libvirt network in case this is run nested in a KVM instance
 addr="192.168.123.1"
