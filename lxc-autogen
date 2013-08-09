@@ -9,7 +9,7 @@ restore=0
 restore_pcmk=0
 generate=0
 cib=0
-add_ms=0
+add_clone=0
 
 function helptext() {
 	echo "lxc_autogen.sh - A tool for generating libvirt lxc containers for testing purposes."
@@ -22,7 +22,7 @@ function helptext() {
 	echo "-p, --restore-cib      Remove cib entries this script generated."
 	echo ""
 	echo "-a, --add-cib          Add remote-node entries for each lxc instance into the cib"
-	echo "-p, --add-ms           Add multi-state resource shared between remote-nodes"
+	echo "-m, --add-clone        Add clone resource shared between remote-nodes"
 	echo "-d, --download-agent   Download and install the latest VirtualDomain agent."
 	echo "-c, --containers       Specify the number of containers to generate, defaults to $containers. Used with -g"
 	echo "-n, --network          What network to override default libvirt network to. Example: -n 192.168.123.1. Used with -g"
@@ -40,7 +40,7 @@ while true ; do
 	-p|--restore-cib) restore_pcmk=1; shift;;
 	-g|--generate) generate=1; shift;;
 	-a|--add-cib) cib=1; shift;;
-	-m|--add-ms) add_ms=1; shift;;
+	-m|--add-clone) add_clone=1; shift;;
 	"") break;;
 	*) helptext 1;;
 	esac
@@ -137,23 +137,22 @@ END
         <meta_attributes id="container$c-meta_attributes">
           <nvpair id="container$c-meta_attributes-remote-node" name="remote-node" value="lxc$c"/>
         </meta_attributes>
-        <operations/>
       </primitive>
 END
 
 		rm -f lxc-ms$c.cib
 		cat << END >> lxc-ms.cib
-      <master id="lxc-stateful-master">
-        <primitive class="ocf" id="lxc-stateful" provider="pacemaker" type="Stateful">
-          <instance_attributes id="lxc-stateful-instance_attributes"/>
+      <clone id="lxc-clone-clone">
+        <primitive class="ocf" id="lxc-clone" provider="pacemaker" type="Dummy">
+          <instance_attributes id="lxc-clone-instance_attributes"/>
           <operations>
-            <op id="lxc-stateful-monitor-interval-60s" interval="60s" name="monitor"/>
+            <op id="lxc-clone-monitor-interval-10s" interval="10s" name="monitor"/>
           </operations>
         </primitive>
-        <meta_attributes id="lxc-stateful-master-meta_attributes">
-          <nvpair id="lxc-stateful-master-meta_attributes-clone-max" name="clone-max" value="3"/>
+        <meta_attributes id="lxc-clone-meta_attributes">
+          <nvpair id="lxc-clone-meta_attributes-clone-max" name="clone-max" value="3"/>
         </meta_attributes>
-      </master>
+      </clone>
 END
 
 		rm -f lxc$c-filesystem/launch-helper
@@ -171,7 +170,7 @@ END
 	done
 }
 
-apply_cib_stateful()
+apply_cib_clone()
 {
 	cibadmin -Q > cur.cib
 	export CIB_file=cur.cib
@@ -179,7 +178,7 @@ apply_cib_stateful()
 	cibadmin -o resources -C -x lxc-ms.cib
 	for tmp in $(ls lxc*.xml); do
 		tmp=$(echo $tmp | sed -e 's/\.xml//g')
-		echo "<rsc_location id=\"lxc-stateful-location-${tmp}\" node=\"${tmp}\" rsc=\"lxc-stateful\" score=\"INFINITY\"/>" > tmp_constraint
+		echo "<rsc_location id=\"lxc-clone-location-${tmp}\" node=\"${tmp}\" rsc=\"lxc-clone\" score=\"INFINITY\"/>" > tmp_constraint
 		cibadmin -o constraints -C -x tmp_constraint
 		rm -f tmp_constraint
 	done
@@ -215,7 +214,7 @@ restore_cib()
 
 	for tmp in $(ls lxc*.xml); do
 		tmp=$(echo $tmp | sed -e 's/\.xml//g')
-		echo "<rsc_location id=\"lxc-stateful-location-${tmp}\" node=\"${tmp}\" rsc=\"lxc-stateful\" score=\"INFINITY\"/>" > tmp_constraint
+		echo "<rsc_location id=\"lxc-clone-location-${tmp}\" node=\"${tmp}\" rsc=\"lxc-clone\" score=\"INFINITY\"/>" > tmp_constraint
 		cibadmin -o constraints -D -x tmp_constraint
 		rm -f tmp_constraint
 	done
@@ -273,6 +272,6 @@ fi
 if [ $cib -eq 1 ]; then
 	apply_cib_entries
 fi
-if [ $add_ms -eq 1 ]; then
-	apply_cib_stateful
+if [ $add_clone -eq 1 ]; then
+	apply_cib_clone
 fi
